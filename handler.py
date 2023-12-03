@@ -9,11 +9,33 @@ logger = logging.getLogger(__name__)
 
 
 api_routes = {}
+PATH_PARAMETER_ID = "{}"
 
 
-def router(path, method):
+class HTTPResponse:
+    def __init__(self, status_code: HTTPStatus, body: dict) -> None:
+        self.status_code = status_code
+        self.body = body
+
+
+def router(path: str, method: HTTPMethod):
     def inner(func: Callable):
-        key = f"{path}:{method}"
+        split_path = path.split("/")
+
+        for i in range(len(split_path)):
+            resource = split_path[i]
+            if resource[:1] != "{":
+                continue
+            if resource[-1] != "}" or not resource[1:-1].isidentifier():
+                raise ValueError(
+                    f"Invalid path parameter: {resource}; ensure the parameter is"
+                    " enclosed in curly braces and is a valid str.identifier()"
+                )
+            # Indicates usage of path parameters in the route
+            split_path[i] = PATH_PARAMETER_ID
+
+        merged_path = "/".join(split_path)
+        key = f"{merged_path}:{method}"
         api_routes[key] = func
 
     return inner
@@ -56,7 +78,7 @@ class Handler(BaseRequestHandler):
             return
 
         # validate http method
-        if method.upper() not in HTTPMethod.__members__:
+        if method not in HTTPMethod.__members__:
             self.send_http_response(
                 HTTPStatus.BAD_REQUEST,
                 route,
@@ -66,21 +88,30 @@ class Handler(BaseRequestHandler):
             return
 
         # validate http path
+        # TODO: handle query parameters
         path = route
         if "?" in route:
             path, query_param = path.split("?")
 
-        route_lookup_key = f"{path}:{method}"
-        if route_lookup_key not in self.api_routes:
+        # replace path parameters with the PATH_PARAMETER_ID identifier
+        split_path = path.split("/")
+        for i in range(len(split_path)):
+            try:
+                int(split_path[i])
+                split_path[i] = PATH_PARAMETER_ID
+            except ValueError:
+                continue
+        merged_path = "/".join(split_path)
+
+        # call api endpoint
+        # TODO: handle errors raised by endpoint
+        route_lookup_key = f"{merged_path}:{method}"
+        endpoint = self.api_routes.get(route_lookup_key)
+        if not endpoint:
             self.send_http_response(
-                HTTPStatus.UNPROCESSABLE_ENTITY, route, logging.ERROR, json_body={"message": f"Route not found"}
+                HTTPStatus.UNPROCESSABLE_ENTITY, route, logging.ERROR, json_body={"message": "Route not found"}
             )
             return
 
-        # Call api endpoint
-        endpoint = self.api_routes.get(route_lookup_key)
-        endpoint()
-
-        # TODO: Handle errors raised by endpoint
-
-        self.send_http_response(HTTPStatus.OK, route, logging.INFO)
+        result: HTTPResponse = endpoint()
+        return self.send_http_response(result.status_code, route, logging.INFO, json_body=result.body)
