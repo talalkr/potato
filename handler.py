@@ -24,13 +24,16 @@ def router(path: str, method: HTTPMethod):
 
         for i in range(len(split_path)):
             resource = split_path[i]
+            if not resource:
+                continue
             if resource[:1] != "{":
+                if not resource.isidentifier():
+                    raise ValueError(
+                        f"Invalid path parameter: {path}; ensure the path parameter is a valid str.identifier()"
+                    )
                 continue
             if resource[-1] != "}" or not resource[1:-1].isidentifier():
-                raise ValueError(
-                    f"Invalid path parameter: {resource}; ensure the parameter is"
-                    " enclosed in curly braces and is a valid str.identifier()"
-                )
+                raise ValueError(f"Invalid path: {path}; ensure path is written as follows '{{<VALID_VARIABLE_NAME>}}'")
             # Indicates usage of path parameters in the route
             split_path[i] = PATH_PARAMETER_ID
 
@@ -88,7 +91,6 @@ class Handler(BaseRequestHandler):
             return
 
         # validate http path
-        # TODO: handle query parameters
         path = route
         if "?" in route:
             path, query_param = path.split("?")
@@ -104,7 +106,6 @@ class Handler(BaseRequestHandler):
         merged_path = "/".join(split_path)
 
         # call api endpoint
-        # TODO: handle errors raised by endpoint
         route_lookup_key = f"{merged_path}:{method}"
         endpoint = self.api_routes.get(route_lookup_key)
         if not endpoint:
@@ -115,3 +116,9 @@ class Handler(BaseRequestHandler):
 
         result: HTTPResponse = endpoint()
         return self.send_http_response(result.status_code, route, logging.INFO, json_body=result.body)
+
+
+# TODO:
+# 1. Add support for query parameters
+# 2. Handle errors raised by endpoint and return them in response
+# 3. Accept request object in endpoint along with path and query paramter
