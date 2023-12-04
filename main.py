@@ -1,12 +1,12 @@
 from http import HTTPMethod, HTTPStatus
 from socketserver import TCPServer
 
-from handler import Handler, logger, router, HTTPResponse
+from handler import Handler, Request, logger, router, HTTPResponse
 from psycopg2 import connect
 
 
 @router(path="/foo/{foo_id}/bar/{bar_id}", method=HTTPMethod.POST)
-def foo():
+def foo(request: Request):
     return HTTPResponse(status_code=HTTPStatus.OK, body={"message": "Hello, World!"})
 
 

@@ -20,6 +20,9 @@ class HTTPResponse:
 
 def router(path: str, method: HTTPMethod):
     def inner(func: Callable):
+        if "request" not in func.__code__.co_varnames:
+            raise TypeError("Endpoint must accept a request object as an argument")
+
         split_path = path.split("/")
 
         for i in range(len(split_path)):
@@ -42,6 +45,14 @@ def router(path: str, method: HTTPMethod):
         api_routes[key] = func
 
     return inner
+
+
+class Request:
+    def __init__(self, method: HTTPMethod, path: str, params: dict, body: dict) -> None:
+        self.method = method
+        self.path = path
+        self.params = params
+        self.body = body
 
 
 class Handler(BaseRequestHandler):
@@ -67,7 +78,7 @@ class Handler(BaseRequestHandler):
 
     def handle(self):
         self.data = self.request.recv(1024).strip().decode("utf-8")
-        request, *headers, data = self.data.split("\n")
+        request, *headers, body = self.data.split("\n")
         method, route, http_version = request.split(" ")
 
         # validate http version
@@ -90,16 +101,19 @@ class Handler(BaseRequestHandler):
             )
             return
 
-        # validate http path
-        path = route
+        # pull parameters
+        query_params = []
+        path = ""
         if "?" in route:
-            path, query_param = path.split("?")
+            path, query_params = route.split("?")
+            query_params = query_params.split("&")
 
         # replace path parameters with the PATH_PARAMETER_ID identifier
-        split_path = path.split("/")
+        path_parameters = []
+        split_path = route.split("/")
         for i in range(len(split_path)):
             try:
-                int(split_path[i])
+                path_parameters.append(int(split_path[i]))
                 split_path[i] = PATH_PARAMETER_ID
             except ValueError:
                 continue
@@ -114,11 +128,6 @@ class Handler(BaseRequestHandler):
             )
             return
 
-        result: HTTPResponse = endpoint()
+        request = Request(method=method, path=path, params={"path": path_parameters, "query": query_params}, body=body)
+        result: HTTPResponse = endpoint(request)
         return self.send_http_response(result.status_code, route, logging.INFO, json_body=result.body)
-
-
-# TODO:
-# 1. Add support for query parameters
-# 2. Handle errors raised by endpoint and return them in response
-# 3. Accept request object in endpoint along with path and query paramter

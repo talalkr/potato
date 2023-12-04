@@ -1,5 +1,5 @@
 from unittest import mock, main, TestCase
-from handler import router
+from handler import Request, router
 
 
 class TestRouterDecorator(TestCase):
@@ -16,7 +16,7 @@ class TestRouterDecorator(TestCase):
             for path, method, expected_key in valid_paths:
 
                 @router(path=path, method=method)
-                def dummy_function():
+                def dummy_function(request: Request):
                     pass
 
                 self.assertIn(expected_key, mock_api_routes)
@@ -39,7 +39,7 @@ class TestRouterDecorator(TestCase):
                 with self.assertRaises(ValueError) as error:
 
                     @router(path=path, method="POST")
-                    def dummy_function():
+                    def dummy_function(request: Request):
                         pass
 
                 self.assertEqual(expected_error.format(path=path), str(error.exception))
