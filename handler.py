@@ -12,6 +12,12 @@ api_routes = {}
 PATH_PARAMETER_ID = "{}"
 
 
+class HTTPException(Exception):
+    def __init__(self, status_code: HTTPStatus, message: str) -> None:
+        self.status_code = status_code
+        self.message = message
+
+
 class HTTPResponse:
     def __init__(self, status_code: HTTPStatus, body: dict) -> None:
         self.status_code = status_code
@@ -128,6 +134,11 @@ class Handler(BaseRequestHandler):
             )
             return
 
-        request = Request(method=method, path=path, params={"path": path_parameters, "query": query_params}, body=body)
-        result: HTTPResponse = endpoint(request)
-        return self.send_http_response(result.status_code, route, logging.INFO, json_body=result.body)
+        try:
+            request = Request(
+                method=method, path=path, params={"path": path_parameters, "query": query_params}, body=body
+            )
+            result: HTTPResponse = endpoint(request)
+            return self.send_http_response(result.status_code, route, logging.INFO, json_body=result.body)
+        except HTTPException as e:
+            return self.send_http_response(e.status_code, route, logging.ERROR, json_body={"message": e.message})

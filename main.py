@@ -1,7 +1,7 @@
 from http import HTTPMethod, HTTPStatus
 from socketserver import TCPServer
 
-from handler import Handler, Request, logger, router, HTTPResponse
+from handler import Handler, Request, logger, router, HTTPResponse, HTTPException
 from psycopg2 import connect
 
 
