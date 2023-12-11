@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 api_routes = {}
 PATH_PARAMETER_ID = "{}"
+RECV_SIZE = 256
 
 
 class HTTPException(Exception):
@@ -82,20 +83,22 @@ class Handler(BaseRequestHandler):
         logger.log(level=log_level, msg=f"{response_proto} {route} {response_status} {response_status_text}")
         self.request.sendall(response.encode(encoding="utf-8"))
 
-    def handle(self):
-        self.data = self.request.recv(1024).strip().decode("utf-8")
-        request, *headers, body = self.data.split("\n")
-        method, route, http_version = request.split(" ")
+    def receive_fixed_data(self, content_size: int) -> bytes:
+        content = b""
+        while len(content) < content_size and b"\n" not in content:
+            remaining = content_size - len(content)
+            recv = self.request.recv(remaining)
+            if not recv:
+                break
+            content += recv
+        return content
 
-        # validate http version
-        if http_version.strip() != "HTTP/1.1":
-            self.send_http_response(
-                HTTPStatus.HTTP_VERSION_NOT_SUPPORTED,
-                route,
-                logging.ERROR,
-                json_body={"message": "Use HTTP/1.1 version"},
-            )
-            return
+    def handle(self):
+        # Receive a fixed-size header to determine the message size
+        fixed_header = self.receive_fixed_data(RECV_SIZE)
+
+        request, *headers, body = fixed_header.decode("utf-8").split("\n")
+        method, route, http_version = request.split(" ")
 
         # validate http method
         if method not in HTTPMethod.__members__:
@@ -107,6 +110,50 @@ class Handler(BaseRequestHandler):
             )
             return
 
+        content_type = ""
+        content_length = 0
+        for h in headers:
+            val = h.split(":")
+            if val[0].lower() == "content-type":
+                content_type = val[1].strip()
+            if val[0].lower() == "content-length":
+                content_length = int(val[1].strip())
+
+        # require content length only for POST, PUT, and PATCH
+        if method in [HTTPMethod.POST, HTTPMethod.PUT, HTTPMethod.PATCH]:
+            # TODO: add max content length accepted
+            if not content_length:
+                self.send_http_response(
+                    HTTPStatus.LENGTH_REQUIRED,
+                    route,
+                    logging.ERROR,
+                    json_body={"message": "Content-Length header required"},
+                )
+                return
+
+            if not content_type or content_type != "application/json":
+                self.send_http_response(
+                    HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+                    route,
+                    logging.ERROR,
+                    json_body={"message": "A content-type of application/json must be provided"},
+                )
+                return
+
+            if content_length - len(body) > 0:
+                # Receive the rest of the body
+                body += self.receive_fixed_data(content_length - len(body)).decode("utf-8")
+
+        # validate http version
+        if http_version.strip() != "HTTP/1.1":
+            self.send_http_response(
+                HTTPStatus.HTTP_VERSION_NOT_SUPPORTED,
+                route,
+                logging.ERROR,
+                json_body={"message": "Use HTTP/1.1 version"},
+            )
+            return
+
         # pull parameters
         query_params = []
         path = ""
@@ -114,7 +161,7 @@ class Handler(BaseRequestHandler):
             path, query_params = route.split("?")
             query_params = query_params.split("&")
 
-        # replace path parameters with the PATH_PARAMETER_ID identifier
+        # replace path param with PATH_PARAMETER_ID to lookup route in 'api_routes' dict
         path_parameters = []
         split_path = route.split("/")
         for i in range(len(split_path)):
@@ -130,7 +177,7 @@ class Handler(BaseRequestHandler):
         endpoint = self.api_routes.get(route_lookup_key)
         if not endpoint:
             self.send_http_response(
-                HTTPStatus.UNPROCESSABLE_ENTITY, route, logging.ERROR, json_body={"message": "Route not found"}
+                HTTPStatus.NOT_FOUND, route, logging.ERROR, json_body={"message": "Route not found"}
             )
             return
 
