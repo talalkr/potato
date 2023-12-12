@@ -47,7 +47,7 @@ class TestRouterDecorator(TestCase):
 
                 self.assertEqual(expected_error.format(path=path), str(error.exception))
 
-    def test_no_content_length_on_write(self):
+    def test_required_content_length_on_write(self):
         data = (
             b"POST /foo HTTP/1.1\r\nHost: localhost:8000\r\nUser-Agent: curl/8.1.2\r\nAccept: */*\r\nContent-Type:"
             b' application/json\r\n\r\n{"message": "hello"}'
@@ -80,13 +80,28 @@ class TestRouterDecorator(TestCase):
         self.assertTrue(mock_send_response.called)
         self.assertEqual(mock_send_response.call_args[0][0], expected_status_code)
 
-    def test_no_content_type(self):
+    def test_required_content_type(self):
         data = (
+            # Method has to be POST or PUT or PATCH
             b"POST /foo HTTP/1.1\r\nHost: localhost:8000\r\nUser-Agent: curl/8.1.2\r\nAccept: */*\r\n"
             b'Content-Length: 20\r\n\r\n{"message": "hello"}'
         )
         expected_status_code = HTTPStatus.UNSUPPORTED_MEDIA_TYPE
         expected_response = {"message": "A content-type of application/json must be provided"}
+
+        with mock.patch.object(handler.Handler, "send_http_response") as mock_send_response:
+            mock_request = mock.Mock(recv=mock.Mock(return_value=data))
+            handler.Handler(request=mock_request, client_address=None, server=None)
+
+        self.assertTrue(mock_request.recv.called)
+        self.assertTrue(mock_send_response.called)
+        self.assertEqual(mock_send_response.call_args[0][0], expected_status_code)
+        self.assertEqual(mock_send_response.call_args[1].get("json_body"), expected_response)
+
+    def test_required_http_version(self):
+        data = b"GET /foo HTTP/2\r\nHost: localhost:8000\r\nUser-Agent: curl/8.1.2\r\nAccept: */*\r\n\r\n"
+        expected_status_code = HTTPStatus.HTTP_VERSION_NOT_SUPPORTED
+        expected_response = {"message": "Use HTTP/1.1 version"}
 
         with mock.patch.object(handler.Handler, "send_http_response") as mock_send_response:
             mock_request = mock.Mock(recv=mock.Mock(return_value=data))
