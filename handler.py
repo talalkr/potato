@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 api_routes = {}
 PATH_PARAMETER_ID = "{}"
 RECV_SIZE = 256
+REQUEST_RECV_TIMEOUT = 0.1  # 100ms
+MAX_CONTENT_LENGTH = 1000000  # 1MB
 
 
 class HTTPException(Exception):
@@ -83,19 +85,23 @@ class Handler(BaseRequestHandler):
         logger.log(level=log_level, msg=f"{response_proto} {route} {response_status} {response_status_text}")
         self.request.sendall(response.encode(encoding="utf-8"))
 
-    def receive_fixed_data(self, content_size: int) -> bytes:
+    def receive_fixed_data(self) -> bytes:
         content = b""
-        while len(content) < content_size and b"\n" not in content:
-            remaining = content_size - len(content)
-            recv = self.request.recv(remaining)
-            if not recv:
-                break
-            content += recv
+        try:
+            self.request.settimeout(REQUEST_RECV_TIMEOUT)
+            while len(content) < RECV_SIZE and b"\n" not in content:
+                remaining = RECV_SIZE - len(content)
+                recv = self.request.recv(remaining)
+                if not recv:
+                    break
+                content += recv
+        finally:
+            self.request.settimeout(None)
         return content
 
     def handle(self):
         # Receive a fixed-size header to determine the message size
-        fixed_header = self.receive_fixed_data(RECV_SIZE)
+        fixed_header = self.receive_fixed_data()
 
         request, *headers, body = fixed_header.decode("utf-8").split("\n")
         method, route, http_version = request.split(" ")
@@ -140,9 +146,18 @@ class Handler(BaseRequestHandler):
                 )
                 return
 
-            if content_length - len(body) > 0:
+            if content_length > MAX_CONTENT_LENGTH:
+                self.send_http_response(
+                    HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                    route,
+                    logging.ERROR,
+                    json_body={"message": f"Request entity must be smaller than {MAX_CONTENT_LENGTH}"},
+                )
+                return
+
+            if len(body) != 0 and content_length - len(body) > 0:
                 # Receive the rest of the body
-                body += self.receive_fixed_data(content_length - len(body)).decode("utf-8")
+                body += self.receive_fixed_data().decode("utf-8")
 
         # validate http version
         if http_version.strip() != "HTTP/1.1":

@@ -64,6 +64,23 @@ class TestRouterDecorator(TestCase):
         self.assertEqual(mock_send_response.call_args[0][0], expected_status_code)
         self.assertEqual(mock_send_response.call_args[1].get("json_body"), expected_response)
 
+    def test_max_content_length_on_write(self):
+        data = (
+            b"POST /foo HTTP/1.1\r\nHost: localhost:8000\r\nUser-Agent: curl/8.1.2\r\nAccept: */*\r\n"
+            b'Content-Type: application/json\r\nContent-Length: 9000000\r\n\r\n{"message": "hi"}'
+        )
+        expected_status_code = HTTPStatus.REQUEST_ENTITY_TOO_LARGE
+        expected_response = {"message": f"Request entity must be smaller than {handler.MAX_CONTENT_LENGTH}"}
+
+        with mock.patch.object(handler.Handler, "send_http_response") as mock_send_response:
+            mock_request = mock.Mock(recv=mock.Mock(return_value=data))
+            handler.Handler(request=mock_request, client_address=None, server=None)
+
+        self.assertTrue(mock_request.recv.called)
+        self.assertTrue(mock_send_response.called)
+        self.assertEqual(mock_send_response.call_args[0][0], expected_status_code)
+        self.assertEqual(mock_send_response.call_args[1].get("json_body"), expected_response)
+
     def test_no_content_length_on_read(self):
         data = b"GET /foo HTTP/1.1\r\nHost: localhost:8000\r\nUser-Agent: curl/8.1.2\r\nAccept: */*\r\n\r\n"
         expected_status_code = HTTPStatus.OK
@@ -118,38 +135,33 @@ class TestRouterDecorator(TestCase):
             b'application/json\r\nContent-Length: 122\r\n\r\n{"message": "hello", "name": "test", "age": 30, "my_bool":'
             b' true, "my_not_bool": false, "is_null": null, "my_list": [1, 2,]'
         )
-        length_first_call = handler.RECV_SIZE
 
         with mock.patch.object(handler.Handler, "receive_fixed_data") as mock_recv_data:
             mock_recv_data.return_value = data
             handler.Handler(request=mock.Mock(), client_address=None, server=None)
 
         mock_recv_data.assert_called_once()
-        self.assertEqual(mock_recv_data.call_args_list[0][0][0], length_first_call)
 
     def test_recv_fixed_data_twice(self):
-        data = (
-            "POST /foo HTTP/1.1\r\nHost: localhost:8000\r\nUser-Agent: curl/8.1.2\r\nAccept: */*\r\n"
-            'Content-Type: application/json\r\nContent-Length: 636\r\n\r\n{"message": "hello", "name": '
-            '"test", "age": 30, "my_bool": true, "my_not_bool": false, "is_null": null, "my_list": [1, 2, '
+        data_p1 = (
+            b"POST /foo HTTP/1.1\r\nHost: localhost:8000\r\nUser-Agent: curl/8.1.2\r\nAccept: */*\r\n"
+            b'Content-Type: application/json\r\nContent-Length: 636\r\n\r\n{"message": "hello", "name": '
+            b'"test", "age": 30, "my_bool": true, "my_not_bool": false, "is_null": null, "my_list": [1, 2, '
         )
-        _, *_, body1 = data.split("\n")
-        body2 = (
-            '3], "is_dict": {"a": 1, "b": 2}, "is_nested": {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": '
-            '{"i": {"j": {"k": {"l": {"m": {"n": {"o": {"p": {"q": {"r": {"s": {"t": {"u": {"v": {"w": {"x": '
-            '{"y": {"z": {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": {"i": {"j": {"k": {"l": {"m": {"n": '
-            '{"o": {"p": {"q": {"r": {"s": {"t": {"u": {"v": {"w": {"x": {"y": {"z, "a": {"b": {"c": {"d": {"e": '
-            '{"f": {"g": {"h": {"i": {"j": {"k": {"l": {"m": {"n": {"o": {"p": {"q": {"r": {"s": {"t": {"u": {"v": '
-            '{"w": {"x": {"y": {"z"}}}}'
+        data_p2 = (
+            b'3], "is_dict": {"a": 1, "b": 2}, "is_nested": {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": '
+            b'{"i": {"j": {"k": {"l": {"m": {"n": {"o": {"p": {"q": {"r": {"s": {"t": {"u": {"v": {"w": {"x": '
+            b'{"y": {"z": {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": {"i": {"j": {"k": {"l": {"m": {"n": '
+            b'{"o": {"p": {"q": {"r": {"s": {"t": {"u": {"v": {"w": {"x": {"y": {"z, "a": {"b": {"c": {"d": {"e": '
+            b'{"f": {"g": {"h": {"i": {"j": {"k": {"l": {"m": {"n": {"o": {"p": {"q": {"r": {"s": {"t": {"u": {"v": '
+            b'{"w": {"x": {"y": {"z"}}}}'
         )
-        length_first_call = handler.RECV_SIZE
-        length_sec_call = len(body1 + body2) - len(body1)
 
         def side_effect(*args, **kwargs):
             if side_effect.counter == 0:
                 side_effect.counter += 1
-                return data.encode("utf-8")
-            return body2.encode("utf-8")
+                return data_p1
+            return data_p2
 
         side_effect.counter = 0
 
@@ -159,9 +171,6 @@ class TestRouterDecorator(TestCase):
             handler.Handler(request=mock_request, client_address=None, server=None)
 
         self.assertTrue(mock_recv_data.call_count, 2)
-        call1, call2 = mock_recv_data.call_args_list
-        self.assertEqual(call1[0][0], length_first_call)
-        self.assertEqual(call2[0][0], length_sec_call)
 
 
 if __name__ == "__main__":
